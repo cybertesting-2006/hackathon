@@ -1,0 +1,176 @@
+import gradio as gr
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from io import BytesIO
+
+# Set style for plots
+plt.style.use('seaborn-v0_8')
+sns.set_palette("viridis")
+
+# Sample data
+sample_data = pd.DataFrame({
+    'Name': ['Alice', 'Bob', 'Charlie', 'Mary', 'John'],
+    'Age': [25, 30, 35, 20, 28],
+    'Department': ['Sales', 'Engineer', 'Marketing', 'Sales', 'HR'],
+    'Salary': [50000, 75000, 60000, 45000, 55000],
+    'Join_Date': pd.date_range('2023-01-01', periods=5)
+})
+
+current_df, cleaned_df = sample_data.copy(), sample_data.copy()
+
+def load_data(file, use_sample=False):
+    global current_df, cleaned_df
+    try:
+        df = sample_data.copy() if use_sample or file is None else pd.read_csv(file) if file.name.endswith('.csv') else pd.read_excel(file)
+        current_df, cleaned_df = df.copy(), df.copy()
+        size_kb = len(df.to_csv()) / 1024
+        return df, f"✅ Loaded: {df.shape}", f"{df.shape[0]}", f"{df.shape[1]}", f"{size_kb:.1f} KB"
+    except:
+        current_df, cleaned_df = sample_data.copy(), sample_data.copy()
+        return sample_data, "❌ Error: Using sample", "5", "5", "15.2 KB"
+
+def clean_data(df, actions):
+    global cleaned_df
+    if df is None: return None, "No data"
+    df_clean, report = df.copy(), "🧹 CLEANING REPORT:\n"
+    if "remove_nulls" in actions: df_clean = df_clean.dropna()
+    if "remove_duplicates" in actions: df_clean = df_clean.drop_duplicates()
+    cleaned_df = df_clean
+    return df_clean, f"{report}✓ Cleaned! New shape: {df_clean.shape}"
+
+def generate_eda(df):
+    if df is None: return None, "No data"
+    
+    # Generate insights
+    insights = f"🔍 Dataset: {df.shape[0]} rows × {df.shape[1]} columns\n\n"
+    
+    # Column information
+    insights += "📊 COLUMNS:\n"
+    for col in df.columns:
+        dtype = df[col].dtype
+        null_count = df[col].isnull().sum()
+        insights += f"• {col} ({dtype}) - {null_count} nulls\n"
+    
+    # Numeric statistics
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    if len(numeric_cols) > 0:
+        insights += f"\n📈 NUMERIC COLUMNS: {len(numeric_cols)}\n"
+        for col in numeric_cols:
+            insights += f"• {col}: mean={df[col].mean():.1f}, std={df[col].std():.1f}\n"
+    
+    # Create visualization
+    fig, ax = plt.subplots(figsize=(10, 6))
+    
+    if len(numeric_cols) > 0:
+        # Plot histogram of first numeric column
+        df[numeric_cols[0]].hist(bins=15, ax=ax, alpha=0.7, edgecolor='black')
+        ax.set_title(f'Distribution of {numeric_cols[0]}', fontsize=14, fontweight='bold')
+        ax.set_xlabel(numeric_cols[0])
+        ax.set_ylabel('Frequency')
+        ax.grid(True, alpha=0.3)
+    else:
+        # If no numeric columns, show message
+        ax.text(0.5, 0.5, 'No numeric columns for visualization', 
+               ha='center', va='center', transform=ax.transAxes, fontsize=12)
+        ax.set_title('Data Visualization', fontsize=14, fontweight='bold')
+    
+    plt.tight_layout()
+    return fig, insights
+
+def export_data(df, format_type, filename):
+    if df is None: return None, "No data"
+    try:
+        if format_type == "CSV": output, filename = df.to_csv(index=False), f"{filename}.csv"
+        elif format_type == "Excel":
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer: df.to_excel(writer, index=False)
+            output.seek(0)
+            filename = f"{filename}.xlsx"
+        return output, f"✅ Exported as {format_type}"
+    except: return None, "❌ Export failed"
+
+with gr.Blocks(
+    theme=gr.themes.Soft(primary_hue="blue"),
+    title="Smart Data Cleaner",
+    css="""
+    .gradio-container { font-family: 'Segoe UI', Tahoma, sans-serif; }
+    h1, h2, h3 { font-family: 'Georgia', serif; font-weight: 700; color: #2c3e50; }
+    .stat-box { background: linear-gradient(135deg, #3498db 0%, #8e44ad 100%); 
+                color: white; padding: 15px; border-radius: 12px; text-align: center; font-weight: 600; }
+    """
+) as app:
+
+    gr.Markdown("# 🚀 SMART DATA CLEANER")
+    
+    with gr.Tabs() as main_tabs:
+        
+        # TAB 1: UPLOAD
+        with gr.Tab("📥 UPLOAD"):
+            with gr.Row():
+                with gr.Column(scale=1):
+                    gr.Markdown("## 📁 UPLOAD DATASET")
+                    file_input = gr.File(label="Upload CSV/Excel", file_types=[".csv", ".xlsx"])
+                    use_sample_btn = gr.Button("📊 Use Sample Data", variant="secondary")
+                    run_all_btn = gr.Button("🎯 RUN ALL", variant="primary")
+                
+                with gr.Column(scale=2):
+                    gr.Markdown("### 📊 DATASET INFO")
+                    with gr.Row():
+                        rows_display = gr.Textbox("5", label="ROWS", interactive=False, elem_classes="stat-box")
+                        cols_display = gr.Textbox("5", label="COLS", interactive=False, elem_classes="stat-box")
+                        size_display = gr.Textbox("15.2 KB", label="SIZE", interactive=False, elem_classes="stat-box")
+                    
+                    status_display = gr.Textbox("Ready to load data", label="STATUS", interactive=False)
+                    data_preview = gr.Dataframe(sample_data, label="DATA PREVIEW", interactive=False)
+
+        # TAB 2: CLEAN
+        with gr.Tab("🧹 CLEAN"):
+            with gr.Row():
+                with gr.Column(scale=1):
+                    gr.Markdown("## 🧼 DATA CLEANING")
+                    clean_options = gr.CheckboxGroup(
+                        choices=["Remove Null Values", "Remove Duplicates"],
+                        label="Cleaning Operations", value=["Remove Null Values", "Remove Duplicates"]
+                    )
+                    clean_btn = gr.Button("✨ CLEAN DATA", variant="primary")
+                
+                with gr.Column(scale=2):
+                    clean_report = gr.Textbox("Cleaning report will appear here", label="CLEANING REPORT", interactive=False, lines=4)
+                    cleaned_preview = gr.Dataframe(sample_data, label="CLEANED DATA", interactive=False)
+
+        # TAB 3: EXPLORE
+        with gr.Tab("🔍 EXPLORE"):
+            with gr.Row():
+                with gr.Column(scale=1):
+                    gr.Markdown("## 📈 DATA EXPLORATION")
+                    eda_btn = gr.Button("📊 GENERATE INSIGHTS", variant="primary")
+                
+                with gr.Column(scale=2):
+                    eda_insights = gr.Textbox("EDA insights will appear here", label="INSIGHTS", interactive=False, lines=8)
+                    eda_plot = gr.Plot(label="DATA VISUALIZATION")
+
+        # TAB 4: EXPORT
+        with gr.Tab("💾 EXPORT"):
+            with gr.Row():
+                with gr.Column(scale=1):
+                    gr.Markdown("## 📤 EXPORT DATA")
+                    export_format = gr.Radio(["CSV", "Excel"], label="FORMAT", value="CSV")
+                    export_name = gr.Textbox("cleaned_data", label="FILENAME")
+                    export_btn = gr.Button("⬇ EXPORT", variant="primary")
+                
+                with gr.Column(scale=2):
+                    export_status = gr.Textbox("Export status will appear here", label="EXPORT STATUS", interactive=False, lines=2)
+                    download_file = gr.File(interactive=False, visible=False)
+
+    # Event handlers
+    file_input.change(load_data, file_input, [data_preview, status_display, rows_display, cols_display, size_display])
+    use_sample_btn.click(lambda: load_data(None, True), outputs=[data_preview, status_display, rows_display, cols_display, size_display])
+    run_all_btn.click(lambda: load_data(file_input, False), outputs=[data_preview, status_display, rows_display, cols_display, size_display])
+    clean_btn.click(clean_data, [data_preview, clean_options], [cleaned_preview, clean_report])
+    eda_btn.click(generate_eda, data_preview, [eda_plot, eda_insights])
+    export_btn.click(export_data, [cleaned_preview, export_format, export_name], [download_file, export_status])
+
+if _name_ == "_main_":
+    app.launch(inbrowser=True)
